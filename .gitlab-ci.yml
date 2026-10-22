@@ -1,0 +1,54 @@
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+stages:
+  - build
+
+build_visual_studio_solutions:
+  stage: build
+  tags:
+    - windows
+  script:
+    - |
+      $ErrorActionPreference = "Stop"
+
+      $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+
+      if (-not (Test-Path $vswhere)) {
+        throw "Visual Studio Installer / vswhere.exe not found."
+      }
+
+      $msbuild = & $vswhere -latest -products '*' `
+        -requires Microsoft.Component.MSBuild `
+        -find 'MSBuild\**\Bin\MSBuild.exe' |
+        Select-Object -First 1
+
+      if (-not $msbuild) {
+        throw "MSBuild not found. Install Visual Studio Build Tools."
+      }
+
+      $solutions = Get-ChildItem $env:CI_PROJECT_DIR `
+        -Filter '*.sln' -Recurse |
+        Where-Object {
+          $_.FullName -notmatch '[\\/](bin|obj|\.git)[\\/]'
+        }
+
+      if (-not $solutions) {
+        throw "No .sln files found in the repository."
+      }
+
+      foreach ($solution in $solutions) {
+        Write-Host "Building $($solution.FullName)"
+
+        & $msbuild $solution.FullName `
+          /restore /m /p:Configuration=Release
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "Build failed: $($solution.Name)"
+        }
+      }
+
+      Write-Host "All solutions built successfully."
